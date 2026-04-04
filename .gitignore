@@ -1,0 +1,17 @@
+# PyCharm 配置
+.idea/
+*.iml
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 打包相关
+build/
+*.spec
+
+# 系统文件
+.DS_Store
+Thumbs.db
