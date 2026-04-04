@@ -1,0 +1,4 @@
+# 当前版本仅使用 Python 标准库（tkinter）。
+# 建议 Python 3.10 及以上（使用了 list[str] 等较新类型标注写法）。
+#
+# 后续若增加依赖，请在此列出并同步更新 README.md 与 CHANGELOG.md。
