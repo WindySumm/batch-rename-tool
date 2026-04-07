@@ -11,13 +11,13 @@ from pathlib import Path
 WIN_INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
-# 一键预设：(id, 界面标题, 一句话说明)。具体替换逻辑在 apply_text_stage 中，用户无需了解正则。
+# 一键预设：(id, 界面标题, 说明)。具体替换逻辑在 apply_text_stage 中，用户无需了解正则。
 PRESET_CHOICES: list[tuple[str, str, str]] = [
     ("none", "不额外整理", "保持文件名原样，仅应用「加前后缀 / 序号」等设置。"),
     (
         "spaces_to_underscore",
         "空格改成下划线",
-        "例：我的 假期 照片.jpg → 我的_假期_照片.jpg（只改主文件名，不动扩展名）",
+        "例：我的 假期 照片.jpg → 我的_假期_照片.jpg",
     ),
     (
         "spaces_to_dash",
@@ -26,12 +26,12 @@ PRESET_CHOICES: list[tuple[str, str, str]] = [
     ),
     (
         "merge_spaces",
-        "多个空格合并成一个",
-        "把连续空格压成一个空格，方便整理从网页复制的名字。",
+        "合并多个空格",
+        "例：我的成绩  26年.jpg → 我的成绩 26年.jpg",
     ),
     (
         "merge_underscore",
-        "多个下划线合并成一个",
+        "合并多个下划线",
         "例：报告__初稿___v2.docx → 报告_初稿_v2.docx",
     ),
     (
@@ -41,7 +41,7 @@ PRESET_CHOICES: list[tuple[str, str, str]] = [
     ),
     (
         "remove_leading_digits",
-        "去掉开头的数字和下划线",
+        "去掉开头的数字和下划线/横线",
         "例：001_说明.txt → 说明.txt；012-图.png → 图.png",
     ),
     ("ext_lower", "扩展名改成小写", "例：照片.JPG → 照片.jpg"),
@@ -55,7 +55,7 @@ PRESET_CHOICES: list[tuple[str, str, str]] = [
     (
         "custom",
         "文本替换",
-        "把上面填的字全部换成下面的字（可选区分大小写）。",
+        "把上面填的字全部换成下面的字。",
     ),
 ]
 
@@ -71,29 +71,45 @@ def preset_tip(mode_id: str) -> str:
 class RenameRuleConfig:
     """界面收集的规则配置。"""
 
+    # 替换模式 none不替换 custom自定义替换 spaces_to_dash空格变短横-
     replace_mode: str = "none"
+    # 替换模式 custom 将被替换的文字
     find_text: str = ""
+    # 替换模式 custom 替换文字
     replace_text: str = ""
+    # 替换模式 是否区分大小写
     find_case_sensitive: bool = True
+    # 文件名的前缀
     prefix: str = ""
+    # 文件名的后缀
     suffix: str = ""
+    # 是否启用批量编号
     use_number: bool = False
+    # 序号的起始数字
     number_start: int = 1
+    # 序号的步长
     number_step: int = 1
+    # 序号的位数 自动补零
     number_width: int = 3
+    # 序号添加在文件名前或后
     number_before_name: bool = True
+    # 序号和文件之间的分隔符
     number_sep: str = "_"
 
 
 @dataclass
 class PlannedRename:
+    # Path是Python的一种对象类型 路径对象
     old_path: Path
     new_path: Path
     error: str | None = None
 
-
+# 判断文件名是否合规
 def is_valid_windows_filename(name: str) -> str | None:
-    """若非法则返回错误说明，否则 None。"""
+    """
+    :param name: 文件名
+    若非法则返回错误说明，否则 None。
+    """
     if not name or name.strip() != name:
         return "文件名不能为空或首尾含空白"
     if name in {".", ".."}:
@@ -102,9 +118,11 @@ def is_valid_windows_filename(name: str) -> str | None:
         return "包含 Windows 不允许的字符: \\ / : * ? \" < > |"
     return None
 
-
+# 重命名的各种操作方法
 def apply_text_stage(name: str, cfg: RenameRuleConfig) -> str:
     """
+    :param name: 文件名
+    :param cfg: RenameRuleConfig 重命名的规则
     在拆分序号/前后缀之前，对文件名做「一键预设」或「自定义替换」。
     预设内部可使用正则；对界面只展示 PRESET_CHOICES 中的说明文字。
     """

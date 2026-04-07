@@ -22,6 +22,7 @@ class RenameApp(ttk.Frame):
     def __init__(self, master: tk.Tk) -> None:
         super().__init__(master, padding=8)
         self.master.title("批量重命名")
+        self.master.iconbitmap("D:/Codes/batch-rename-tool/Re_icon.ico") # 设置图标
         self.master.minsize(810, 560)
         self.pack(fill=tk.BOTH, expand=True)
 
