@@ -1,4 +1,4 @@
-"""Tkinter 界面：分区布局、强化预览、一键预设（底层规则不暴露）。"""
+"""Tkinter 界面：分区布局、强化预览、一键预设（底层规则不暴露）、拖放支持、拖动排序。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from pathlib import Path
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from rename_core import (
     PRESET_CHOICES,
@@ -19,10 +21,10 @@ from rename_core import (
 
 
 class RenameApp(ttk.Frame):
-    def __init__(self, master: tk.Tk) -> None:
+    def __init__(self, master: TkinterDnD.Tk) -> None:
         super().__init__(master, padding=8)
         self.master.title("批量重命名")
-        self.master.iconbitmap("D:/Codes/batch-rename-tool/Re_icon.ico") # 设置图标
+        self.master.iconbitmap("D:/Codes/batch-rename-tool/Re_icon.ico")
         self.master.minsize(810, 560)
         self.pack(fill=tk.BOTH, expand=True)
 
@@ -52,9 +54,11 @@ class RenameApp(ttk.Frame):
         self._files: list = []
         self._plans: list = []
 
+        self._drag_item = None
+
         self._build()
         self._on_preset_change()
-        self._status("请先选择文件夹；改名的结果会实时显示在上方预览区。")
+        self._status("请先选择文件夹或拖放文件/文件夹；改名的结果会实时显示在上方预览区。")
 
     def _current_preset_id(self) -> str:
         title = self._preset_combo_val.get()
@@ -176,7 +180,6 @@ class RenameApp(ttk.Frame):
 
         self._upper_canvas.bind("<MouseWheel>", _upper_wheel)
 
-        # —— 上区内：选文件 + 规则（可随滚动区变长） ——
         pick = ttk.LabelFrame(self._upper_inner, text="① 选择要改名的文件", padding=6)
         pick.pack(fill=tk.X, pady=(0, 6))
         row1 = ttk.Frame(pick)
@@ -286,8 +289,7 @@ class RenameApp(ttk.Frame):
         for w in self._iter_descendants(self._upper_inner):
             w.bind("<MouseWheel>", _upper_wheel, add="+")
 
-        # —— 下区：预览 ——
-        preview_box = ttk.LabelFrame(lower, text="② 改完后的文件名预览（请在这里核对，再点「执行重命名」）", padding=6)
+        preview_box = ttk.LabelFrame(lower, text="② 改完后的文件名预览（请在这里核对，再点「执行重命名」）\n💡 提示：可拖放文件/文件夹到此处，也可拖动行调整顺序", padding=6)
         preview_box.pack(fill=tk.BOTH, expand=True)
 
         self._preview_hint = tk.StringVar(value="")
@@ -305,7 +307,6 @@ class RenameApp(ttk.Frame):
         self._tree.column("old", width=240, stretch=True)
         self._tree.column("new", width=240, stretch=True)
         self._tree.column("msg", width=180, stretch=True)
-        
 
         self._tree.tag_configure("change", foreground="#0b6e0b")
         self._tree.tag_configure("same", foreground="#666666")
@@ -327,6 +328,15 @@ class RenameApp(ttk.Frame):
         self._stat = tk.StringVar(value="")
         ttk.Label(self, textvariable=self._stat, relief=tk.SUNKEN, anchor=tk.W).pack(fill=tk.X, pady=(8, 0))
 
+        preview_box.drop_target_register(DND_FILES)
+        preview_box.dnd_bind("<<Drop>>", self._on_drop)
+        self._tree.drop_target_register(DND_FILES)
+        self._tree.dnd_bind("<<Drop>>", self._on_drop)
+
+        self._tree.bind("<ButtonPress-1>", self._on_tree_click)
+        self._tree.bind("<B1-Motion>", self._on_tree_drag)
+        self._tree.bind("<ButtonRelease-1>", self._on_tree_release)
+
     @staticmethod
     def _iter_descendants(widget: tk.Misc):
         yield widget
@@ -335,6 +345,86 @@ class RenameApp(ttk.Frame):
 
     def _status(self, text: str) -> None:
         self._stat.set(text)
+
+    def _on_drop(self, event: tk.Event) -> None:
+        paths = self._parse_drop_paths(event.data)
+        if not paths:
+            return
+
+        files: list[Path] = []
+        for p in paths:
+            path_obj = Path(p)
+            if path_obj.is_dir():
+                files.extend(collect_files(path_obj, self._recursive.get(), self._ext_filter.get()))
+            elif path_obj.is_file():
+                files.append(path_obj)
+
+        if files:
+            self._files = list(dict.fromkeys(self._files + files))
+            if paths[0]:
+                first_path = Path(paths[0])
+                if first_path.is_dir():
+                    self._folder.set(str(first_path))
+                else:
+                    self._folder.set(str(first_path.parent))
+            self._preview()
+            self._status(f"已添加 {len(files)} 个文件")
+
+    def _parse_drop_paths(self, data: str) -> list[str]:
+        if not data:
+            return []
+        if data.startswith("{") and data.endswith("}"):
+            data = data[1:-1]
+        paths = []
+        current = []
+        in_quote = False
+        for c in data:
+            if c == "{":
+                in_quote = True
+            elif c == "}":
+                in_quote = False
+                if current:
+                    paths.append("".join(current))
+                    current = []
+            elif c == " " and not in_quote:
+                if current:
+                    paths.append("".join(current))
+                    current = []
+            else:
+                current.append(c)
+        if current:
+            paths.append("".join(current))
+        return paths
+
+    def _on_tree_click(self, event: tk.Event) -> None:
+        item = self._tree.identify_row(event.y)
+        if item:
+            self._drag_item = item
+
+    def _on_tree_drag(self, event: tk.Event) -> None:
+        if self._drag_item is None:
+            return
+        target_item = self._tree.identify_row(event.y)
+        if target_item and target_item != self._drag_item:
+            self._tree.move(self._drag_item, "", self._tree.index(target_item))
+
+    def _on_tree_release(self, event: tk.Event) -> None:
+        if self._drag_item is not None:
+            self._reorder_files_from_tree()
+            self._preview()
+        self._drag_item = None
+
+    def _reorder_files_from_tree(self) -> None:
+        items = self._tree.get_children("")
+        new_files = []
+        old_paths = {p.resolve(): p for p in self._files}
+        for item in items:
+            old_name = self._tree.item(item, "values")[1]
+            for p in self._files:
+                if p.name == old_name:
+                    new_files.append(p)
+                    break
+        self._files = new_files
 
     def _pick_folder(self) -> None:
         path = filedialog.askdirectory(title="选择要处理的文件夹")
@@ -417,15 +507,13 @@ class RenameApp(ttk.Frame):
             else:
                 tag = "change"
             self._tree.insert("", tk.END, values=(i, p.old_path.name, p.new_path.name, msg), tags=(tag,))
-    
-
 
     def _apply(self) -> None:
         cfg = self._read_cfg()
         if cfg is None:
             return
-        if not self._folder.get().strip():
-            messagebox.showwarning("提示", "请先选择文件夹。")
+        if not self._folder.get().strip() and not self._files:
+            messagebox.showwarning("提示", "请先选择文件夹或拖放文件。")
             return
         self._plans = build_plan(self._files, cfg)
         self._fill_tree()
@@ -465,6 +553,6 @@ class RenameApp(ttk.Frame):
 
 
 def run() -> None:
-    root = tk.Tk()
+    root = TkinterDnD.Tk()
     RenameApp(root)
     root.mainloop()
